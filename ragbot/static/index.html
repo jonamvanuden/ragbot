@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personal-Planer · Wissensassistent</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Roboto:wght@400;500;700&family=Poppins:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <img class="logo" src="assets/logo.gif" alt="Personal-Planer – Das HR-Systemhaus">
+    <nav>
+      <span class="status"><i></i>Wissensassistent</span>
+       <a href="logs.html" class="navlink">Protokoll</a>
+         <a href="tools.html" class="navlink">Werkzeuge</a>
+        <a href="dashboard.html" class="navlink">Monitoring</a>
+      <button id="reset" type="button">Neuer Chat</button>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h2>Ihr digitaler Assistent für <strong>Personalplanung</strong>,
+      <strong>Verwaltung</strong> und <strong>Zeiterfassung</strong>.</h2>
+  </section>
+
+  <main id="chat">
+    <section class="welcome">
+      <h3>Womit kann ich helfen?</h3>
+      <div class="tiles">
+        <button class="tile" data-q="Was kann die Digitale Personalakte?"><img src="assets/dpa.png" alt=""><span>Digitale<br>Personalakte</span></button>
+        <button class="tile" data-q="Wie funktioniert der Urlaubsplaner?"><img src="assets/up.png" alt=""><span>Urlaubsplaner</span></button>
+        <button class="tile" data-q="Was bietet die Arbeitszeitverwaltung?"><img src="assets/azv.png" alt=""><span>Arbeitszeit<br>Verwaltung</span></button>
+        <button class="tile" data-q="Wie hilft der Personaleinsatzplaner?"><img src="assets/pep.png" alt=""><span>Personal<br>Einsatzplaner</span></button>
+        <button class="tile" data-q="Was kann die Besucherverwaltung?"><img src="assets/bv.png" alt=""><span>Besucher<br>Verwaltung</span></button>
+        <button class="tile" data-q="Wie funktioniert das Aufgabenmanagement?"><img src="assets/agm.png" alt=""><span>Aufgaben<br>Management</span></button>
+        <button class="tile" data-q="Wofür ist das digitale Postbuch?"><img src="assets/pb.png" alt=""><span>Postbuch</span></button>
+      </div>
+    </section>
+  </main>
+
+  <section class="cta">
+      <div class="modes" id="modes">
+      <button type="button" data-mode="rag" class="on">Fragen</button>
+      <button type="button" data-mode="agent">Agent</button>
+      <span class="mode-hint" id="modeHint">Antworten aus der Wissensbasis</span>
+    </div>
+    <form id="composer">
+      <textarea id="input" rows="1" placeholder="Ihre Frage an den Assistenten…" autofocus></textarea>
+      <button id="send" type="submit" aria-label="Senden">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M3 11.5 20 4l-7.5 17-2-7.5L3 11.5Z" fill="currentColor"/></svg>
+      </button>
+    </form>
+    <p class="hint">Enter zum Senden · Shift + Enter für neue Zeile</p>
+  </section>
+
+  <footer class="legal">
+    <span>Copyright 2026 Personal-Planer.de</span>
+    <span>Interner KI-Assistent</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

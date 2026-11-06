@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Werkzeug-Aufrufe · Personal-Planer</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --navy: #02005B; --blue: #325BC4; --sky: #44ACE1; --teal: #71C7BF; --deep: #051A2F;
+      --bg: #FEFEFE; --gray: #F0F0F0; --line: #E2E2E2; --text: #272727; --muted: #6B7280;
+      --wrap: max(16px, calc((100% - 1400px) / 2));
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Roboto", Arial, sans-serif; }
+    h1, h2, h3 { font-family: "Montserrat", Arial, sans-serif; margin: 0; }
+    [hidden] { display: none !important; }
+    code, .mono { font-family: "Roboto Mono", monospace; font-size: 12px; }
+
+    .topbar { display: flex; align-items: center; gap: 20px; padding: 12px var(--wrap); background: #fff;
+              border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+    .topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+                     background: linear-gradient(90deg, var(--navy), var(--blue), var(--sky), var(--teal)); }
+    .topbar .logo { height: 38px; display: block; }
+    .topbar h1 { flex: 1; font-size: 18px; color: var(--navy); text-transform: uppercase; }
+    .topbar nav { display: flex; gap: 18px; flex-wrap: wrap; }
+    .topbar nav a { color: var(--navy); text-decoration: none; font-weight: 500; }
+    .topbar nav a:hover, .topbar nav a.on { color: var(--blue); }
+    main { padding: 20px var(--wrap) 48px; }
+
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .seg { display: inline-flex; background: var(--gray); border-radius: 20px; padding: 3px; }
+    .seg button { border: 0; background: none; font: 600 14px "Montserrat", Arial, sans-serif; color: #4B5563;
+                  padding: 6px 16px; border-radius: 17px; cursor: pointer; }
+    .seg button.on { background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(2,0,91,.12); }
+    .spacer { flex: 1; }
+    .muted { color: var(--muted); }
+    .auto { display: flex; gap: 6px; align-items: center; color: var(--muted); cursor: pointer; }
+
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .tile { background: var(--gray); border-radius: 16px; padding: 12px 16px; }
+    .tile span { display: block; font-size: 13px; color: #4B5563; }
+    .tile strong { font: 600 24px "Montserrat", Arial, sans-serif; color: var(--navy); }
+    .tile small { display: block; font-size: 12px; color: var(--muted); }
+
+    .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .filters input, .filters select { font: inherit; padding: 8px 14px; border: 1px solid var(--line); border-radius: 20px; background: #fff; }
+    .filters input { flex: 1; min-width: 220px; }
+    .filters input:focus, .filters select:focus { outline: none; border-color: var(--blue); }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; }
+    .tablewrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 10px 12px;
+         border-bottom: 1px solid var(--line); white-space: nowrap; }
+    #rows td { padding: 9px 12px; border-bottom: 1px solid var(--gray); vertical-align: top; }
+    #rows tr { cursor: pointer; }
+    #rows tr:hover td { background: #F7F9FE; }
+    #rows tr.sel td { background: #E9EEFB; }
+    .tname { font-weight: 500; color: var(--navy); white-space: nowrap; }
+    .prod { display: block; font-size: 12px; color: var(--muted); }
+    .args { max-width: 360px; color: #4B5563; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .args b { font-weight: 500; color: var(--muted); }
+    .nowrap { white-space: nowrap; }
+
+    .badge { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 10px; border-radius: 20px;
+             background: var(--gray); color: var(--muted); white-space: nowrap; }
+    .badge.ok { background: #E3F4F2; color: #1F766D; }
+    .badge.error { background: #FDE4E4; color: #B91C1C; }
+    .badge.invalid { background: #FDF0DC; color: #92580A; }
+    .badge.running { background: #E4EAF8; color: var(--blue); }
+    .badge.write { background: #FFF4DE; color: #92580A; }
+    .badge.read { background: #EEF2FB; color: var(--blue); }
+
+    .pager { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 10px 12px; color: var(--muted); }
+    .pager button { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 4px 14px; cursor: pointer; }
+    .pager button:disabled { opacity: .4; cursor: default; }
+
+    .detail { padding: 18px 20px; position: sticky; top: 84px; max-height: calc(100dvh - 104px); overflow-y: auto; }
+    .dhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .dhead h2 { font-size: 19px; color: var(--navy); }
+    .detail h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--navy); margin: 18px 0 8px; }
+    .desc { color: var(--muted); margin: 6px 0 0; font-size: 13px; }
+    .kv td { padding: 5px 14px 5px 0; border-bottom: 1px solid var(--gray); vertical-align: top; }
+    .kv td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+    .kv td:last-child { word-break: break-word; }
+    pre { margin: 0; background: var(--deep); color: #E8EEF6; padding: 12px; border-radius: 10px; white-space: pre-wrap;
+          word-break: break-word; font: 12px/1.5 "Roboto Mono", monospace; max-height: 420px; overflow: auto; }
+    .errbox { color: #B91C1C; background: #FDE4E4; padding: 10px 12px; border-radius: 10px; }
+    .empty { color: var(--muted); text-align: center; padding: 36px 12px; margin: 0; }
+    .linkbtn { border: 0; background: #E9EEFB; color: var(--navy); border-radius: 20px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+
+    .catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; }
+    .tool { padding: 16px 18px; }
+    .tool header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .tool h3 { font-size: 15px; color: var(--navy); }
+    .tool .counts { margin: 8px 0 10px; color: var(--muted); font-size: 13px; }
+    .params td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--gray); vertical-align: top; font-size: 13px; }
+    .params td:first-child { white-space: nowrap; }
+    .req { color: #B91C1C; font-weight: 700; }
+
+    @media (max-width: 960px) {
+      .split { grid-template-columns: minmax(0, 1fr); }
+      .detail { position: static; max-height: none; }
+      .catalog { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 640px) { .topbar h1 { display: none; } .topbar .logo { height: 30px; } .topbar { gap: 12px; } .topbar nav { gap: 10px; font-size: 13px; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a href="./"><img class="logo" src="assets/logo.gif" alt="Personal-Planer"></a>
+    <h1>Werkzeug-Aufrufe</h1>
+    <nav>
+      <a href="./">Chat</a>
+      <a href="logs.html">Protokoll</a>
+      <a href="tools.html" class="on">Werkzeuge</a>
+      <a href="dashboard.html">Monitoring</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div class="seg" id="tabs">
+        <button data-tab="calls" class="on">Aufrufe</button>
+        <button data-tab="catalog">Katalog</button>
+      </div>
+      <span class="spacer"></span>
+      <label class="auto"><input type="checkbox" id="live"> Live (5 s)</label>
+    </div>
+
+    <!-- ===== calls ===== -->
+    <section id="tab-calls">
+      <div class="tiles" id="tiles"></div>
+      <div class="filters">
+        <input id="q" type="search" placeholder="In Parametern, Ergebnissen, Fehlern suchen … (z. B. MA-1001, UA-00007)">
+        <select id="f-tool"><option value="">Alle Werkzeuge</option></select>
+        <select id="f-status">
+          <option value="">Alle Status</option><option value="ok">ok</option><option value="error">Fehler</option>
+          <option value="invalid">ungültig</option><option value="running">läuft</option>
+        </select>
+        <select id="f-kind"><option value="">Lesen + Ändern</option><option value="read">nur Lesen</option><option value="write">nur Ändern</option></select>
+        <select id="f-caller"><option value="">Alle Aufrufer</option></select>
+      </div>
+      <div class="split">
+        <section class="card">
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>#</th><th>Zeit</th><th>Werkzeug</th><th>Art</th><th>Parameter</th><th>Status</th><th>Aufrufer</th><th>Dauer</th></tr></thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="pager"></div>
+        </section>
+        <section class="card detail" id="detail"><p class="empty">Wähle links einen Aufruf aus.</p></section>
+      </div>
+    </section>
+
+    <!-- ===== catalog ===== -->
+    <section id="tab-catalog" hidden>
+      <p class="muted" style="margin-top:0">Alle Werkzeuge, die der Agent benutzen kann, mit ihren Parametern.
+        <span class="req">*</span> = Pflichtfeld. „Ändert Daten“ heißt: braucht im Chat eine Freigabe.</p>
+      <div class="catalog" id="catalog"></div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const state = { tab: "calls", offset: 0, limit: 50, selected: null };
+    const label = (t) => t.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+    const KIND = { read: "lesen", write: "ändert Daten" };
+    const STATUS = { ok: "ok", error: "Fehler", invalid: "ungültig", running: "läuft" };
+    const time = (ts) => new Date(ts).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const ms = (v) => (v == null ? "–" : v < 1000 ? `${v.toLocaleString("de-DE")} ms` : `${(v / 1000).toFixed(1)} s`);
+    const val = (v) => (v === null || v === undefined ? "–" : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+    function el(tag, props = {}, ...kids) {      // text is always inserted as text, never as HTML
+      const e = document.createElement(tag);
+      for (const [k, v] of Object.entries(props)) {
+        if (k === "class") e.className = v;
+        else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+        else if (v != null) e.setAttribute(k, v);
+      }
+      for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+      return e;
+    }
+    async function api(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+    function fillSelect(sel, values, labelFn = (x) => x) {
+      const keep = sel.value, first = sel.options[0];
+      if ([...sel.options].slice(1).map((o) => o.value).join("|") === values.join("|")) return;
+      sel.replaceChildren(first, ...values.map((v) => el("option", { value: v }, labelFn(v))));
+      sel.value = keep;
+    }
+
+    // ---------- calls ----------
+    async function loadCalls() {
+      const p = new URLSearchParams({ limit: state.limit, offset: state.offset });
+      const q = $("#q").value.trim();
+      if (q) p.set("q", q);
+      for (const f of ["tool", "status", "kind", "caller"]) { const v = $(`#f-${f}`).value; if (v) p.set(f, v); }
+      try {
+        const d = await api(`api/calls?${p}`);
+        const s = d.stats;
+        const tile = (l, v, sub) => el("div", { class: "tile" }, el("span", {}, l), el("strong", {}, v), sub ? el("small", {}, sub) : null);
+        $("#tiles").replaceChildren(
+          tile("Aufrufe gesamt", s.n.toLocaleString("de-DE")),
+          tile("Erfolgreich", s.ok.toLocaleString("de-DE"), s.n ? `${Math.round((s.ok / s.n) * 100)} %` : null),
+          tile("Fehler", s.error.toLocaleString("de-DE"), "Geschäftsregel verletzt"),
+          tile("Ungültig", s.invalid.toLocaleString("de-DE"), "falsche Parameter"),
+          tile("Änderungen", s.changes.toLocaleString("de-DE"), "erfolgreiche Schreibaufrufe"),
+          tile("Ø Dauer", ms(s.avg_ms)));
+        fillSelect($("#f-tool"), d.tools, label);
+        fillSelect($("#f-caller"), d.callers);
+        renderRows(d.items);
+        renderPager(d.total);
+      } catch (e) {
+        $("#rows").replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "empty" }, `Fehler beim Laden: ${e.message}`)));
+      }
+    }
+
+    function argsPreview(params) {
+      const parts = Object.entries(params).map(([k, v]) => [el("b", {}, `${k}: `), val(v)]);
+      if (!parts.length) return el("span", { class: "muted" }, "–");
+      return el("div", { class: "args", title: JSON.stringify(params) }, parts.flatMap((p, i) => (i ? [" · ", ...p] : p)));
+    }
+
+    function renderRows(items) {
+      if (!items.length) {
+        $("#rows").replaceChildren(el("tr", {}, el("td", { colspan: 8, class: "empty" }, "Keine Aufrufe. Lass den Agenten etwas erledigen oder probiere: python -m ragbot.tools demo")));
+        return;
+      }
+      $("#rows").replaceChildren(...items.map((c) => el("tr", { "data-id": c.id, class: c.id === state.selected ? "sel" : "", onclick: () => select(c.id) },
+        el("td", { class: "mono" }, c.id),
+        el("td", { class: "nowrap" }, time(c.ts)),
+        el("td", {}, el("span", { class: "tname" }, label(c.tool)), el("span", { class: "prod" }, c.product)),
+        el("td", {}, el("span", { class: `badge ${c.kind}` }, KIND[c.kind] || c.kind)),
+        el("td", {}, argsPreview(c.params)),
+        el("td", {}, el("span", { class: `badge ${c.status}`, title: c.error || "" }, STATUS[c.status] || c.status)),
+        el("td", { class: "muted nowrap" }, c.caller || "–"),
+        el("td", { class: "nowrap muted" }, ms(c.duration_ms)))));
+    }
+
+    function renderPager(total) {
+      const from = total ? state.offset + 1 : 0, to = Math.min(state.offset + state.limit, total);
+      $("#pager").replaceChildren(
+        el("span", {}, `${from}–${to} von ${total}`),
+        el("button", { disabled: state.offset === 0 ? "" : null, onclick: () => { state.offset = Math.max(0, state.offset - state.limit); loadCalls(); } }, "‹ Neuer"),
+        el("button", { disabled: to >= total ? "" : null, onclick: () => { state.offset += state.limit; loadCalls(); } }, "Älter ›"));
+    }
+
+    async function select(id) {
+      state.selected = id;
+      history.replaceState(null, "", `#${id}`);
+      document.querySelectorAll("#rows tr[data-id]").forEach((tr) => tr.classList.toggle("sel", Number(tr.dataset.id) === id));
+      let c;
+      try { c = await api(`api/calls/${id}`); }
+      catch (e) { $("#detail").replaceChildren(el("p", { class: "errbox" }, `Aufruf ${id} nicht gefunden.`)); return; }
+
+      const kv = (rows) => el("table", { class: "kv" }, el("tbody", {}, rows.map(([k, v]) => el("tr", {}, el("td", {}, k), el("td", {}, v)))));
+      const params = Object.entries(c.params);
+      $("#detail").replaceChildren(...[
+        el("div", { class: "dhead" },
+          el("h2", {}, `#${c.id} ${label(c.tool)}`),
+          el("span", { class: `badge ${c.kind}` }, KIND[c.kind] || c.kind),
+          el("span", { class: `badge ${c.status}` }, STATUS[c.status] || c.status)),
+        el("p", { class: "desc" }, `${c.product} · ${c.description || ""}`),
+
+        el("h3", {}, "Parameter"),
+        params.length ? kv(params.map(([k, v]) => [k, val(v)])) : el("p", { class: "muted" }, "keine"),
+
+        el("h3", {}, c.status === "ok" ? "Ergebnis" : "Fehler"),
+        c.status === "ok" ? el("pre", {}, JSON.stringify(c.result, null, 2)) : el("p", { class: "errbox" }, c.error || "(keine Meldung)"),
+
+        el("h3", {}, "Aufruf"),
+        kv([["Zeit", new Date(c.ts).toLocaleString("de-DE")], ["Aufrufer", c.caller || "–"],
+            ["Session", c.session_id || "–"], ["Dauer", ms(c.duration_ms)], ["Werkzeug-Name", c.tool]]),
+        c.session_id ? el("p", {}, el("button", { class: "linkbtn", onclick: () => { $("#q").value = c.session_id; state.offset = 0; loadCalls(); } },
+          "Alle Aufrufe dieser Session")) : null,
+      ].filter(Boolean));
+    }
+
+    // ---------- catalog ----------
+    async function loadCatalog() {
+      const tools = await api("api/calls-catalog");
+      $("#catalog").replaceChildren(...tools.map((t) => el("article", { class: "card tool" },
+        el("header", {}, el("h3", {}, label(t.name)), el("span", { class: `badge ${t.kind}` }, KIND[t.kind]), el("span", { class: "muted" }, t.product)),
+        el("p", { class: "desc" }, t.description),
+        el("div", { class: "counts" },
+          `${t.calls} Aufrufe · ${t.ok} ok · ${t.failed} fehlgeschlagen`, t.last ? ` · zuletzt ${time(t.last)}` : "", " ",
+          t.calls ? el("button", { class: "linkbtn", onclick: () => { $("#f-tool").value = t.name; setTab("calls"); } }, "Aufrufe anzeigen") : null),
+        el("table", { class: "params" }, el("tbody", {}, t.params.map((p) => el("tr", {},
+          el("td", {}, el("code", {}, p.name), p.required ? el("span", { class: "req" }, " *") : null),
+          el("td", { class: "muted" }, p.type),
+          el("td", {}, p.description || "", p.default != null ? el("span", { class: "muted" }, ` (Standard: ${val(p.default)})`) : null))))))));
+    }
+
+    // ---------- wiring ----------
+    function setTab(tab) {
+      state.tab = tab;
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+      $("#tab-calls").hidden = tab !== "calls";
+      $("#tab-catalog").hidden = tab !== "catalog";
+      if (tab === "calls") { state.offset = 0; loadCalls(); } else loadCatalog();
+    }
+    document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
+    let deb;
+    $("#q").addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(() => { state.offset = 0; loadCalls(); }, 300); });
+    for (const f of ["tool", "status", "kind", "caller"]) $(`#f-${f}`).addEventListener("change", () => { state.offset = 0; loadCalls(); });
+    let timer;
+    $("#live").addEventListener("change", (e) => { clearInterval(timer); if (e.target.checked) timer = setInterval(() => state.tab === "calls" && loadCalls(), 5000); });
+
+    loadCalls();
+    const fromHash = Number(location.hash.slice(1));
+    if (fromHash) select(fromHash);
+  </script>
+</body>
+</html>

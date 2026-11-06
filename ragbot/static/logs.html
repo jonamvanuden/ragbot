@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat-Protokoll · Personal-Planer</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700&family=Roboto:wght@400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <style>
+    :root {
+      --navy: #02005B; --blue: #325BC4; --teal: #71C7BF; --sky: #44ACE1; --deep: #051A2F;
+      --gray: #F0F0F0; --line: #E2E2E2; --text: #272727; --muted: #6B7280;
+      --amber: #B45309; --red: #B91C1C;
+      --wrap: max(16px, calc((100% - 1400px) / 2));
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #FEFEFE; color: var(--text); font: 14px/1.5 "Roboto", Arial, sans-serif; }
+    h1, h2, h3 { font-family: "Montserrat", Arial, sans-serif; margin: 0; }
+
+    .topbar { display: flex; align-items: center; gap: 20px; padding: 12px var(--wrap);
+              background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+    .topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+                     background: linear-gradient(90deg, var(--navy), var(--blue), var(--sky), var(--teal)); }
+    .topbar .logo { height: 38px; display: block; }
+    .topbar h1 { flex: 1; font-size: 18px; color: var(--navy); text-transform: uppercase; }
+    .btn { background: var(--navy); color: #fff; text-decoration: none; padding: 8px 18px; border-radius: 20px; }
+    .btn:hover { background: var(--blue); }
+
+    main { padding: 20px var(--wrap) 40px; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .stat { background: var(--gray); border-radius: 16px; padding: 14px 16px; }
+    .stat span { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .stat strong { font: 700 22px "Montserrat", Arial, sans-serif; color: var(--navy); }
+    .stat small { font: 400 12px "Roboto", Arial, sans-serif; color: var(--muted); }
+
+    .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+    .filters input[type=search], .filters select {
+      font: inherit; padding: 9px 14px; border: 1px solid var(--line); border-radius: 20px; background: #fff; }
+    .filters input[type=search] { flex: 1; min-width: 220px; }
+    .filters input:focus, .filters select:focus { outline: none; border-color: var(--blue); }
+    .chip { display: inline-flex; align-items: center; gap: 6px; background: #E4EAF8; color: var(--navy);
+            border: 0; border-radius: 20px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+    .chip[hidden] { display: none; }
+    .auto { display: flex; gap: 6px; align-items: center; color: var(--muted); cursor: pointer; }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+    .list, .detail { background: #fff; border: 1px solid var(--line); border-radius: 16px; }
+    .tablewrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 12px; text-transform: uppercase; color: var(--muted); font-weight: 500;
+         padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    #rows td { padding: 9px 12px; border-bottom: 1px solid var(--gray); vertical-align: top; }
+    #rows tr { cursor: pointer; }
+    #rows tr:hover td { background: #F7F9FE; }
+    #rows tr.sel td { background: #E9EEFB; }
+    td.q { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nowrap { white-space: nowrap; }
+    .warn { color: var(--red); font-weight: 500; }
+
+    .badge { display: inline-block; padding: 1px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+             background: var(--gray); color: var(--muted); }
+    .badge.done { background: #E3F4F2; color: #1F766D; }
+    .badge.cutoff { background: #FDF0DC; color: var(--amber); }
+    .badge.error { background: #FDE4E4; color: var(--red); }
+
+    .pager { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 10px 12px; color: var(--muted); }
+    .pager button { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 20px;
+                    padding: 5px 14px; cursor: pointer; }
+    .pager button:disabled { opacity: .4; cursor: default; }
+
+    .detail { padding: 18px 20px; position: sticky; top: 84px; max-height: calc(100dvh - 104px); overflow-y: auto; }
+    .dhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .dhead h2 { font-size: 20px; color: var(--navy); }
+    .muted { color: var(--muted); }
+    .detail h3 { font-size: 13px; text-transform: uppercase; color: var(--navy); margin: 20px 0 8px; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 12px; }
+    .metrics div { background: var(--gray); border-radius: 12px; padding: 8px 10px; }
+    .metrics span { display: block; font-size: 11px; color: var(--muted); }
+    .metrics strong { font-size: 15px; }
+    .question { background: var(--navy); color: #fff; padding: 10px 14px; border-radius: 14px; margin: 0; white-space: pre-wrap; }
+
+    .hits td { padding: 6px 8px; border-bottom: 1px solid var(--gray); vertical-align: top; }
+    .hits tr.dropped { opacity: .5; }
+    .hits .score { white-space: nowrap; font: 12px "Roboto Mono", monospace; }
+    .bar { width: 60px; height: 6px; background: var(--gray); border-radius: 3px; display: inline-block;
+           margin-right: 6px; vertical-align: middle; overflow: hidden; }
+    .bar i { display: block; height: 100%; background: var(--blue); }
+    .hits summary { cursor: pointer; }
+    .preview { color: var(--muted); margin: 6px 0; font-size: 13px; }
+    .hits a { color: var(--blue); word-break: break-all; font-size: 12px; }
+
+    .answer { border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; }
+    .answer > :first-child { margin-top: 0; }
+    .answer > :last-child { margin-bottom: 0; }
+    .block { margin-top: 14px; }
+    .block summary { cursor: pointer; font-weight: 500; color: var(--navy); }
+    pre { background: var(--deep); color: #E8EEF6; padding: 12px; border-radius: 10px; white-space: pre-wrap;
+          word-break: break-word; font: 12px/1.5 "Roboto Mono", monospace; max-height: 420px; overflow: auto; }
+    .error { color: var(--red); background: #FDE4E4; padding: 8px 12px; border-radius: 10px; }
+    .empty { color: var(--muted); text-align: center; padding: 30px; }
+
+    @media (max-width: 960px) {
+      .split { grid-template-columns: 1fr; }
+      .detail { position: static; max-height: none; }
+    }
+    @media (max-width: 640px) { .topbar h1 { display: none; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a href="./"><img class="logo" src="assets/logo.gif" alt="Personal-Planer"></a>
+    <h1>Chat-Protokoll</h1>
+     <a href="dashboard.html" style="color:var(--navy);text-decoration:none;font-weight:500">Monitoring</a>
+    <a class="btn" href="./">Zum Chat</a>
+  </header>
+
+  <main>
+    <section class="stats" id="stats"></section>
+
+    <section class="filters">
+      <input id="q" type="search" placeholder="Frage oder Antwort durchsuchen…">
+      <select id="status">
+        <option value="">Alle Status</option>
+        <option value="done">done</option>
+        <option value="cutoff">cutoff</option>
+        <option value="error">error</option>
+        <option value="aborted">aborted</option>
+      </select>
+      <select id="model"><option value="">Alle Modelle</option></select>
+      <button id="sessionChip" class="chip" hidden></button>
+      <label class="auto"><input type="checkbox" id="auto"> Live (5 s)</label>
+    </section>
+
+    <div class="split">
+      <section class="list">
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Zeit</th><th>Status</th><th>Frage</th><th>Treffer</th>
+                  <th>Tokens</th><th>Suche</th><th>Gesamt</th><th>tok/s</th></tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="pager" id="pager"></div>
+      </section>
+      <section class="detail" id="detail"><p class="empty">Wähle links eine Anfrage aus.</p></section>
+    </div>
+  </main>
+
+  <script src="logs.js"></script>
+</body>
+</html>

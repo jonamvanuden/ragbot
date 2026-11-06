@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitoring · Personal-Planer</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --navy: #02005B; --blue: #325BC4; --sky: #44ACE1; --teal: #71C7BF; --deep: #051A2F;
+      --surface: #FFFFFF; --bg: #FEFEFE; --gray: #F0F0F0; --line: #E2E2E2; --grid: #ECECEC;
+      --text: #272727; --text-2: #4B5563; --muted: #6B7280;
+      --series-1: #325BC4;   /* brand blue  – validated */
+      --series-2: #2B9E94;   /* brand teal, darkened for contrast – validated with series-1 */
+      --below: #C5CAD3;      /* histogram bins below MIN_SCORE */
+      --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+      --wrap: max(16px, calc((100% - 1400px) / 2));
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Roboto", Arial, sans-serif; }
+    h1, h2 { font-family: "Montserrat", Arial, sans-serif; margin: 0; }
+    a { color: var(--blue); }
+    [hidden] { display: none !important; }
+
+    /* ---------- header ---------- */
+    .topbar { display: flex; align-items: center; gap: 20px; padding: 12px var(--wrap); background: #fff;
+              border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; }
+    .topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+                     background: linear-gradient(90deg, var(--navy), var(--blue), var(--sky), var(--teal)); }
+    .topbar .logo { height: 38px; display: block; }
+    .topbar h1 { flex: 1; font-size: 18px; color: var(--navy); text-transform: uppercase; }
+    .topbar nav { display: flex; gap: 18px; }
+    .topbar nav a { color: var(--navy); text-decoration: none; font-weight: 500; }
+    .topbar nav a:hover, .topbar nav a.on { color: var(--blue); }
+
+    main { padding: 20px var(--wrap) 48px; }
+
+    /* ---------- toolbar: tabs + range + live, one row ---------- */
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .seg { display: inline-flex; background: var(--gray); border-radius: 20px; padding: 3px; }
+    .seg button { border: 0; background: none; font: inherit; color: var(--text-2); padding: 6px 14px;
+                  border-radius: 17px; cursor: pointer; }
+    .seg button.on { background: #fff; color: var(--navy); font-weight: 500; box-shadow: 0 1px 3px rgba(2,0,91,.12); }
+    .tabs button { font-family: "Montserrat", Arial, sans-serif; font-weight: 600; }
+    .spacer { flex: 1; }
+    .auto { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+    .muted { color: var(--muted); }
+    .loading { opacity: .55; transition: opacity .15s; }
+
+    /* ---------- stat tiles ---------- */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .tile { background: var(--gray); border-radius: 16px; padding: 14px 16px; min-width: 0; }
+    .tile .label { font-size: 13px; color: var(--text-2); }
+    .tile .value { font: 600 26px/1.2 "Montserrat", Arial, sans-serif; color: var(--navy); margin-top: 2px; }
+    .tile .sub { font-size: 12px; color: var(--muted); }
+
+    /* ---------- cards ---------- */
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; min-width: 0; }
+    .card.wide { grid-column: 1 / -1; }
+    .card > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    .card h2 { font-size: 15px; color: var(--navy); }
+    .card header p { margin: 0; color: var(--muted); font-size: 13px; flex: 1; }
+    .tbl-btn { border: 1px solid var(--line); background: #fff; color: var(--text-2); font: inherit; font-size: 12px;
+               padding: 3px 10px; border-radius: 20px; cursor: pointer; margin-left: auto; }
+    .tbl-btn:hover { border-color: var(--blue); color: var(--blue); }
+    .chart { position: relative; min-height: 220px; }
+    .chart svg { display: block; overflow: visible; }
+    .chart .tick { font: 11px "Roboto", Arial, sans-serif; fill: var(--muted); }
+    .chart .endlabel { font: 500 12px "Roboto", Arial, sans-serif; fill: var(--text-2); }
+    .chart .mark { transition: opacity .1s; }
+    .chart .mark.hot { opacity: .7; }
+    .chart .hit { outline: none; }
+    .empty { color: var(--muted); text-align: center; padding: 40px 10px; margin: 0; }
+
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .key-line { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+    .key-rect { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+    /* status segmented bar */
+    .segbar { display: flex; gap: 2px; height: 14px; border-radius: 4px; overflow: hidden; margin: 8px 0 14px; }
+    .segbar span { min-width: 3px; }
+    .statuslist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .statuslist li { display: grid; grid-template-columns: 22px 1fr auto auto; gap: 8px; align-items: center; }
+    .statuslist .ico { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+                       color: #fff; font-size: 11px; font-weight: 700; }
+    .statuslist .pct { color: var(--muted); width: 48px; text-align: right; }
+
+    /* horizontal bars (sources) */
+    .hbars { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .hbars .name { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+    .hbars .name a { color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hbars .name a:hover { color: var(--blue); text-decoration: underline; }
+    .hbars .track { height: 8px; margin-top: 4px; }
+    .hbars .fill { height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 3px; }
+
+    /* lists + small tables */
+    .rows { list-style: none; margin: 0; padding: 0; }
+    .rows li { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--gray); }
+    .rows li:last-child { border-bottom: 0; }
+    .rows a.q { flex: 1; color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rows a.q:hover { color: var(--blue); text-decoration: underline; }
+    .rows .meta { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 6px 8px;
+         border-bottom: 1px solid var(--line); white-space: nowrap; }
+    td { padding: 6px 8px; border-bottom: 1px solid var(--gray); vertical-align: top; }
+    td.n, th.n { text-align: right; }
+    .datatable { margin-top: 12px; max-height: 320px; overflow: auto; }
+
+    /* ---------- database tab ---------- */
+    .dbinfo { color: var(--muted); margin-bottom: 14px; font-size: 13px; }
+    .dbinfo code { font-family: "Roboto Mono", monospace; color: var(--text-2); }
+    .dbgrid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .dbmain { display: grid; gap: 16px; min-width: 0; }
+    .tablelist { list-style: none; margin: 0; padding: 0; }
+    .tablelist button { width: 100%; display: flex; justify-content: space-between; gap: 8px; border: 0; background: none;
+                        font: inherit; padding: 8px 10px; border-radius: 10px; cursor: pointer; color: var(--text); text-align: left; }
+    .tablelist button:hover { background: var(--gray); }
+    .tablelist button.on { background: #E9EEFB; color: var(--navy); font-weight: 500; }
+    .tablelist .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .gridwrap { overflow: auto; max-height: 520px; border: 1px solid var(--gray); border-radius: 10px; }
+    .gridwrap table { font: 12px/1.45 "Roboto Mono", monospace; }
+    .gridwrap th { position: sticky; top: 0; background: #fff; font-family: "Roboto", Arial, sans-serif; z-index: 1; }
+    .gridwrap th.sortable { cursor: pointer; }
+    .gridwrap th.sortable:hover { color: var(--blue); }
+    .gridwrap td { white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+    .gridwrap td:hover { background: #F7F9FE; }
+    .gridwrap td.null { color: #B0B5BF; font-style: italic; }
+    .pager { display: flex; align-items: center; gap: 8px; color: var(--muted); margin-left: auto; }
+    .pager button, .btn-ghost { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 20px;
+                                 padding: 4px 12px; cursor: pointer; color: var(--text-2); }
+    .pager button:disabled { opacity: .4; cursor: default; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .examples button { border: 0; background: #E9EEFB; color: var(--navy); border-radius: 20px; padding: 5px 12px;
+                       font: inherit; font-size: 12px; cursor: pointer; }
+    .examples button:hover { background: #DCE4F8; }
+    #sql { width: 100%; min-height: 120px; resize: vertical; font: 13px/1.5 "Roboto Mono", monospace; padding: 10px 12px;
+           border: 1px solid var(--line); border-radius: 10px; background: #FBFBFC; color: var(--text); }
+    #sql:focus { outline: none; border-color: var(--blue); }
+    .sqlbar { display: flex; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
+    .btn { border: 0; background: var(--navy); color: #fff; font: inherit; padding: 8px 20px; border-radius: 20px; cursor: pointer; }
+    .btn:hover { background: var(--blue); }
+    .error { color: var(--critical); background: #FDE8E8; padding: 8px 12px; border-radius: 10px; margin: 0 0 10px; }
+
+    dialog { border: 0; border-radius: 16px; padding: 0; width: min(900px, calc(100vw - 32px)); max-height: 80vh;
+             box-shadow: 0 20px 60px rgba(2,0,91,.25); }
+    dialog::backdrop { background: rgba(5,26,47,.45); }
+    dialog header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+    dialog pre { margin: 0; padding: 16px; max-height: calc(80vh - 56px); overflow: auto; white-space: pre-wrap;
+                 word-break: break-word; font: 12px/1.5 "Roboto Mono", monospace; background: #FBFBFC; }
+
+    /* ---------- tooltip ---------- */
+    .tooltip { position: fixed; z-index: 50; pointer-events: none; background: #fff; border: 1px solid var(--line);
+               border-radius: 10px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(2,0,91,.12); font-size: 12px; min-width: 120px; }
+    .tooltip .tt-title { color: var(--muted); margin-bottom: 4px; }
+    .tooltip .tt-row { display: flex; align-items: center; gap: 8px; }
+    .tooltip .tt-row strong { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+    .tooltip .tt-row span:last-child { color: var(--text-2); }
+    .tooltip .tt-key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .dbgrid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .topbar h1 { display: none; }
+      .topbar .logo { height: 30px; }
+      .tile .value { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a href="./"><img class="logo" src="assets/logo.gif" alt="Personal-Planer"></a>
+    <h1>Monitoring</h1>
+    <nav>
+      <a href="./">Chat</a>
+      <a href="logs.html">Protokoll</a>
+      <a href="dashboard.html" class="on">Monitoring</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div class="seg tabs" role="tablist">
+        <button data-tab="overview" class="on">Übersicht</button>
+        <button data-tab="db">Datenbank</button>
+      </div>
+      <div class="seg" id="range">
+        <button data-period="24h">24 Std.</button>
+        <button data-period="7d" class="on">7 Tage</button>
+        <button data-period="30d">30 Tage</button>
+        <button data-period="all">Alles</button>
+      </div>
+      <span class="spacer"></span>
+      <span class="muted" id="updated"></span>
+      <label class="auto"><input type="checkbox" id="auto"> Live (30 s)</label>
+    </div>
+
+    <!-- ================= OVERVIEW ================= -->
+    <section id="tab-overview">
+      <div class="tiles" id="tiles"></div>
+
+      <div class="grid">
+        <article class="card wide" id="card-requests">
+          <header><h2>Anfragen</h2><p id="requestsSub">pro Tag</p><button class="tbl-btn">Tabelle</button></header>
+          <div class="chart" id="chRequests"></div>
+          <div class="datatable" hidden></div>
+        </article>
+
+        <article class="card wide" id="card-latency">
+          <header><h2>Antwortzeit</h2><p>abgeschlossene Antworten, Durchschnitt und 95. Perzentil</p><button class="tbl-btn">Tabelle</button></header>
+          <div class="legend" id="latencyLegend"></div>
+          <div class="chart" id="chLatency"></div>
+          <div class="datatable" hidden></div>
+        </article>
+
+        <article class="card" id="card-status">
+          <header><h2>Status</h2><p>wie Antworten enden</p></header>
+          <div id="status"></div>
+        </article>
+
+        <article class="card" id="card-scores">
+          <header><h2>Suchqualität</h2><p>bester Treffer-Score je Frage</p><button class="tbl-btn">Tabelle</button></header>
+          <div class="legend" id="scoresLegend"></div>
+          <div class="chart" id="chScores"></div>
+          <div class="datatable" hidden></div>
+        </article>
+
+        <article class="card" id="card-sources">
+          <header><h2>Meistgenutzte Quellen</h2><p>wie oft ein Dokument als Kontext diente</p></header>
+          <div id="sources"></div>
+        </article>
+
+        <article class="card" id="card-models">
+          <header><h2>Modelle</h2><p>im gewählten Zeitraum</p></header>
+          <div id="models"></div>
+        </article>
+
+        <article class="card" id="card-nocontext">
+          <header><h2>Fragen ohne Kontext</h2><p>Wissenslücken: nichts über MIN_SCORE gefunden</p></header>
+          <div id="nocontext"></div>
+        </article>
+
+        <article class="card" id="card-slowest">
+          <header><h2>Langsamste Antworten</h2><p>Kandidaten zum Untersuchen</p></header>
+          <div id="slowest"></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ================= DATABASE ================= -->
+    <section id="tab-db" hidden>
+      <p class="dbinfo" id="dbinfo"></p>
+      <div class="dbgrid">
+        <aside class="card">
+          <header><h2>Tabellen</h2></header>
+          <ul class="tablelist" id="tables"></ul>
+        </aside>
+        <div class="dbmain">
+          <article class="card">
+            <header><h2 id="tblTitle">Tabelle</h2><div class="pager" id="tblPager"></div></header>
+            <div class="gridwrap" id="tblGrid"></div>
+          </article>
+          <article class="card">
+            <header><h2>SQL-Abfrage</h2><p>nur lesend, die Datenbank kann hier nicht verändert werden</p></header>
+            <div class="examples" id="examples"></div>
+            <textarea id="sql" spellcheck="false"></textarea>
+            <div class="sqlbar">
+              <button class="btn" id="run">Ausführen</button>
+              <span class="muted">Strg + Enter</span>
+              <span class="muted" id="sqlInfo"></span>
+            </div>
+            <p class="error" id="sqlError" hidden></p>
+            <div class="gridwrap" id="sqlGrid" hidden></div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="tooltip" id="tip" hidden></div>
+  <dialog id="cell">
+    <header><strong id="cellTitle"></strong><button class="btn-ghost" id="cellClose">Schließen</button></header>
+    <pre id="cellBody"></pre>
+  </dialog>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

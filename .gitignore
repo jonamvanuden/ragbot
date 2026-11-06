@@ -1,0 +1,31 @@
+# --- Python environment & caches ---
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# --- big files: models and HuggingFace cache ---
+models/
+.cache/
+*.gguf
+*.safetensors
+
+# --- data: knowledge base + chat log (contains every question asked!) ---
+data/*
+!data/docs/
+
+# --- secrets ---
+.env
+*.token
+.git-credentials
+
+# --- backups, snapshots, logs ---
+*.bak
+*.zip
+*.tgz
+*.tar.gz
+backup*
+code-snapshot.txt
+venv-packages-backup.txt
+*.log
+logging-check.txt
