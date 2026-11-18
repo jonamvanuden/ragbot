@@ -5,9 +5,10 @@ from ragbot import config
 from ragbot.llms.base import ChatModel
 from ragbot.llms.deepseek_r1 import DeepSeekR1
 from ragbot.llms.mistral_small import MistralSmall
+from ragbot.llms.qwen36 import Qwen36
 
 # Adding a model = new file + one entry here.
-MODELS: dict[str, type[ChatModel]] = {cls.name: cls for cls in (DeepSeekR1, MistralSmall)}
+MODELS: dict[str, type[ChatModel]] = {cls.name: cls for cls in (DeepSeekR1, MistralSmall, Qwen36)}
 
 _active: ChatModel | None = None
 _switch = threading.Lock()

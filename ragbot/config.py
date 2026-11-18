@@ -7,13 +7,15 @@ DATA_DIR = ROOT / "data"
 
 # Switch without touching code:  LLM=deepseek-r1-14b uvicorn ...
 #DEFAULT_MODEL = os.getenv("LLM", "mistral-small-3.2")
-DEFAULT_MODEL = os.getenv("LLM", "deepseek-r1-14b")
+#DEFAULT_MODEL = os.getenv("LLM", "deepseek-r1-14b")
+DEFAULT_MODEL = os.getenv("LLM", "qwen3.6-35b-a3b")
 
 # ---------- knowledge base ----------
 START_URL = "https://www.personal-planer.de/"
 MAX_PAGES = 300                  # safety limit for the crawler
 DOCS_DIR = DATA_DIR / "docs"     # internal documents
 QDRANT_DIR = DATA_DIR / "qdrant"
+ERP_DB = DATA_DIR / "erp.db"  
 COLLECTION = "personal_planer"
 
 EMBED_MODEL = "BAAI/bge-m3"      # multilingual, very good at German

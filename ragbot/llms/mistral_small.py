@@ -3,7 +3,7 @@ from ragbot.llms.llamacpp import LlamaCppModel
 
 class MistralSmall(LlamaCppModel):
     name = "mistral-small-3.2"
-    filename = "mistral-small-3.2/mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q5_K_M.gguf"
+    filename = "mistral-small-3.2/mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf"
     temperature = 0.15          # Mistral's recommendation
     max_tokens = 1024
     n_ctx = 16384

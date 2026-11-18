@@ -40,6 +40,8 @@ def main():
             pending = None
             for ev in events:
                 t = ev["type"]
+                if t == "route":
+                    print(f"  🧭 {ev['route']}: {ev.get('grund', '')}")
                 if t == "thought":
                     print(f"  💭 {ev['text']}")
                 elif t == "tool_start":

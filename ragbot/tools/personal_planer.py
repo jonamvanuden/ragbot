@@ -1,78 +1,102 @@
 """Mock Personal-Planer API: 11 tools across the product modules.
 
-Nothing here talks to a real system. Write tools (kind="write") only record the call
-and return what the real API would plausibly answer. Read tools answer from a small
-fixed staff list plus the earlier calls in api_calls, so the mock behaves consistently:
-a vacation you requested shows up in the balance, in absences, and can be approved.
+Nothing here talks to a real system: all data lives in the mock ERP database data/erp.db
+(rebuild with: python -m ragbot.erp.seed). Read tools query it, write tools check the
+business rules (remaining vacation, overlaps, working-time law …) and then change it.
+Every call is also logged in chat.db (api_calls) as the audit log.
 """
-import hashlib
 from datetime import date, datetime, time, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ragbot.tools import store
+from ragbot.erp import rules
+from ragbot.erp.db import connect
+from ragbot.erp.seed import workdays
 from ragbot.tools.registry import Context, ToolError, tool
 
-# ---------------- fixed mock data (fictional people) ----------------
-MITARBEITER = [
-    {"id": "MA-1001", "name": "Anna Schneider",  "abteilung": "Vertrieb",    "rolle": "Key Account Managerin",  "vorgesetzt": "MA-1005", "urlaubstage": 30, "wochenstunden": 40},
-    {"id": "MA-1002", "name": "Jonas Weber",     "abteilung": "Entwicklung", "rolle": "PHP-Entwickler",         "vorgesetzt": "MA-1006", "urlaubstage": 28, "wochenstunden": 40},
-    {"id": "MA-1003", "name": "Leonie Fischer",  "abteilung": "Support",     "rolle": "Support-Mitarbeiterin",  "vorgesetzt": "MA-1007", "urlaubstage": 30, "wochenstunden": 30},
-    {"id": "MA-1004", "name": "Mehmet Yilmaz",   "abteilung": "IT-Betrieb",  "rolle": "Systemadministrator",    "vorgesetzt": "MA-1006", "urlaubstage": 30, "wochenstunden": 40},
-    {"id": "MA-1005", "name": "Claudia Becker",  "abteilung": "Vertrieb",    "rolle": "Vertriebsleiterin",      "vorgesetzt": None,      "urlaubstage": 30, "wochenstunden": 40},
-    {"id": "MA-1006", "name": "Thomas Wagner",   "abteilung": "Entwicklung", "rolle": "Teamleiter Entwicklung", "vorgesetzt": None,      "urlaubstage": 30, "wochenstunden": 40},
-    {"id": "MA-1007", "name": "Sophie Hoffmann", "abteilung": "Support",     "rolle": "Teamleiterin Support",   "vorgesetzt": None,      "urlaubstage": 30, "wochenstunden": 40},
-    {"id": "MA-1008", "name": "Lukas Schäfer",   "abteilung": "Support",     "rolle": "Werkstudent",            "vorgesetzt": "MA-1007", "urlaubstage": 15, "wochenstunden": 20},
-]
-BY_ID = {m["id"]: m for m in MITARBEITER}
+# ---------------- data comes from the mock ERP database (data/erp.db) ----------------
+def _rows(sql: str, *args) -> list[dict]:
+    """Run a SELECT on erp.db and return the rows as dicts."""
+    conn = connect()
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.close()
+
+
+def _write(sql: str, *args):
+    """Run one INSERT/UPDATE on erp.db and commit it."""
+    conn = connect()
+    try:
+        with conn:
+            conn.execute(sql, args)
+    finally:
+        conn.close()
+
+
+def _next_id(table: str, prefix: str) -> str:
+    """Next free ID like UA-00127: highest number in the table + 1."""
+    n = _rows(f"SELECT MAX(CAST(SUBSTR(id, {len(prefix) + 2}) AS INTEGER)) AS n FROM {table}")[0]["n"] or 0
+    return f"{prefix}-{n + 1:05d}"
+
 
 MitarbeiterId = Field(description="Mitarbeiter-ID im Format MA-1234. Unbekannt? Erst mitarbeiter_suchen aufrufen.",
                       pattern=r"^MA-\d{4}$")
 
+PERSON_SQL = """
+    SELECT m.id, m.vorname || ' ' || m.nachname AS name, a.name AS abteilung, m.rolle,
+           m.vorgesetzt_id AS vorgesetzt, m.urlaubstage, m.wochenstunden, m.email, m.eintritt
+    FROM mitarbeiter m JOIN abteilungen a ON a.id = m.abteilung_id
+    WHERE m.aktiv = 1
+"""
+
 
 def _person(mid: str) -> dict:
-    if mid not in BY_ID:
+    rows = _rows(PERSON_SQL + " AND m.id = ?", mid)
+    if not rows:
         raise ToolError(f"Mitarbeiter {mid} existiert nicht. Mit mitarbeiter_suchen die richtige ID finden.")
-    return BY_ID[mid]
+    return rows[0]
 
 
 def _workdays(start: date, end: date) -> int:
-    """Mon–Fri between start and end (inclusive). Public holidays are ignored in the mock."""
-    return sum(1 for i in range((end - start).days + 1) if (start + timedelta(days=i)).weekday() < 5)
+    """Mon–Fri between start and end (inclusive), without public holidays (same rule as the seed)."""
+    return len(workdays(start, end))
 
 
 def _vacations() -> list[dict]:
-    """All vacation requests so far, with their current decision."""
-    decisions = {c["params"]["antrag_id"]: c["params"]["entscheidung"] for c in store.successful("urlaubsantrag_entscheiden")}
-    out = []
-    for c in store.successful("urlaub_beantragen"):
-        r = c["result"]
-        out.append({**r, "status": decisions.get(r["antrag_id"], "beantragt")})
-    return out
-
-
-def _stable_offset(key: str, lo: float, hi: float) -> float:
-    """Deterministic pseudo-random number, so the same question gives the same mock answer."""
-    h = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
-    return round((lo + (hi - lo) * h) * 4) / 4          # quarter hours
+    """All vacation requests (except cancelled ones), with name and department."""
+    return _rows("""
+        SELECT u.id AS antrag_id, u.mitarbeiter_id, m.vorname || ' ' || m.nachname AS name, a.name AS abteilung,
+               u.von, u.bis, u.arbeitstage, u.art, u.status
+        FROM urlaubsantraege u
+        JOIN mitarbeiter m ON m.id = u.mitarbeiter_id
+        JOIN abteilungen a ON a.id = m.abteilung_id
+        WHERE u.status != 'storniert'
+        ORDER BY u.von""")
 
 
 # =====================================================================
 # Digitale Personalakte
 # =====================================================================
 class MitarbeiterSuchenParams(BaseModel):
-    suchbegriff: str | None = Field(None, description="Teil des Namens, z. B. 'Weber' oder 'Anna'.")
+    suchbegriff: str | None = Field(None, description="Teil des Namens, z. B. 'Weber' oder 'Anna'. Weglassen für alle Mitarbeiter.")
     abteilung: str | None = Field(None, description="z. B. Vertrieb, Entwicklung, Support, IT-Betrieb")
 
 
 @tool(MitarbeiterSuchenParams, product="Digitale Personalakte", kind="read")
 def mitarbeiter_suchen(p: MitarbeiterSuchenParams, ctx: Context) -> dict:
     """Sucht Mitarbeiter nach Name und/oder Abteilung und liefert ID, Rolle und Vorgesetzte.
+    Ohne Parameter liefert es ALLE Mitarbeiter (für Listen und Übersichten).
     Immer zuerst verwenden, wenn ein Name statt einer Mitarbeiter-ID genannt wird."""
-    hits = [m for m in MITARBEITER
-            if (not p.suchbegriff or p.suchbegriff.lower() in m["name"].lower())
-            and (not p.abteilung or p.abteilung.lower() == m["abteilung"].lower())]
+    sql, args = PERSON_SQL, []
+    if p.suchbegriff:
+        sql += " AND (m.vorname || ' ' || m.nachname) LIKE ?"
+        args.append(f"%{p.suchbegriff}%")
+    if p.abteilung:
+        sql += " AND a.name LIKE ?"
+        args.append(p.abteilung)
+    hits = _rows(sql + " ORDER BY m.nachname", *args)
     return {"anzahl": len(hits),
             "mitarbeiter": [{k: m[k] for k in ("id", "name", "abteilung", "rolle", "vorgesetzt")} for m in hits]}
 
@@ -84,7 +108,7 @@ class UrlaubBeantragenParams(BaseModel):
     mitarbeiter_id: str = MitarbeiterId
     von: date = Field(description="Erster Urlaubstag (YYYY-MM-DD)")
     bis: date = Field(description="Letzter Urlaubstag (YYYY-MM-DD)")
-    art: Literal["Erholungsurlaub", "Sonderurlaub", "Unbezahlter Urlaub", "Bildungsurlaub"] = "Erholungsurlaub"
+    art: Literal["Erholungsurlaub", "Sonderurlaub", "Unbezahlter Urlaub"] = "Erholungsurlaub"
     kommentar: str | None = Field(None, description="Optionale Notiz für die/den Vorgesetzte(n)")
 
 
@@ -102,7 +126,18 @@ def urlaub_beantragen(p: UrlaubBeantragenParams, ctx: Context) -> dict:
         rest = urlaubsanspruch_rest(m["id"], p.von.year)
         if tage > rest:
             raise ToolError(f"Nicht genug Resturlaub: {tage} Tage beantragt, nur noch {rest} verfügbar.")
-    return {"antrag_id": f"UA-{ctx.call_id:05d}", "mitarbeiter_id": m["id"], "name": m["name"],
+    overlap = next((v for v in _vacations() if v["mitarbeiter_id"] == m["id"]
+                    and v["status"] in ("beantragt", "genehmigt")
+                    and v["von"] <= p.bis.isoformat() and v["bis"] >= p.von.isoformat()), None)
+    if overlap:
+        raise ToolError(f"Überschneidung mit Antrag {overlap['antrag_id']} "
+                        f"({overlap['von']} bis {overlap['bis']}, {overlap['status']}).")
+
+    antrag_id = _next_id("urlaubsantraege", "UA")
+    _write("""INSERT INTO urlaubsantraege (id, mitarbeiter_id, von, bis, arbeitstage, art, status, kommentar, beantragt_am)
+              VALUES (?, ?, ?, ?, ?, ?, 'beantragt', ?, ?)""",
+           antrag_id, m["id"], p.von.isoformat(), p.bis.isoformat(), tage, p.art, p.kommentar, date.today().isoformat())
+    return {"antrag_id": antrag_id, "mitarbeiter_id": m["id"], "name": m["name"],
             "abteilung": m["abteilung"], "von": p.von.isoformat(), "bis": p.bis.isoformat(),
             "arbeitstage": tage, "art": p.art, "status": "beantragt", "genehmigung_durch": m["vorgesetzt"]}
 
@@ -111,7 +146,7 @@ def urlaubsanspruch_rest(mitarbeiter_id: str, jahr: int) -> int:
     used = sum(v["arbeitstage"] for v in _vacations()
                if v["mitarbeiter_id"] == mitarbeiter_id and v["von"].startswith(str(jahr))
                and v["art"] == "Erholungsurlaub" and v["status"] != "abgelehnt")
-    return BY_ID[mitarbeiter_id]["urlaubstage"] - used
+    return _person(mitarbeiter_id)["urlaubstage"] - used
 
 
 class UrlaubsanspruchParams(BaseModel):
@@ -148,6 +183,8 @@ def urlaubsantrag_entscheiden(p: UrlaubsantragEntscheidenParams, ctx: Context) -
         raise ToolError(f"Antrag {p.antrag_id} ist bereits {antrag['status']}.")
     if p.entscheidung == "abgelehnt" and not p.begruendung:
         raise ToolError("Eine Ablehnung braucht eine Begründung.")
+    _write("UPDATE urlaubsantraege SET status = ?, entschieden_am = ?, begruendung = ? WHERE id = ?",
+           p.entscheidung, date.today().isoformat(), p.begruendung, p.antrag_id)
     return {"antrag_id": p.antrag_id, "name": antrag["name"], "von": antrag["von"], "bis": antrag["bis"],
             "status": p.entscheidung, "begruendung": p.begruendung, "benachrichtigt": antrag["mitarbeiter_id"]}
 
@@ -193,9 +230,15 @@ def arbeitszeit_buchen(p: ArbeitszeitBuchenParams, ctx: Context) -> dict:
         raise ToolError("Mehr als 10 Stunden Arbeitszeit pro Tag sind laut ArbZG nicht zulässig.")
     if minuten > 6 * 60 and p.pause_minuten < 30:
         raise ToolError("Ab 6 Stunden sind mindestens 30 Minuten Pause vorgeschrieben.")
-    return {"buchung_id": f"AZ-{ctx.call_id:05d}", "mitarbeiter_id": m["id"], "name": m["name"],
+    if _rows("SELECT 1 FROM zeitbuchungen WHERE mitarbeiter_id = ? AND datum = ?", m["id"], p.datum.isoformat()):
+        raise ToolError(f"Für {m['name']} gibt es am {p.datum} bereits eine Zeitbuchung.")
+    _write("""INSERT INTO zeitbuchungen (mitarbeiter_id, datum, beginn, ende, pause_minuten, netto_stunden, quelle)
+              VALUES (?, ?, ?, ?, ?, ?, 'manuell')""",
+           m["id"], p.datum.isoformat(), p.beginn.strftime("%H:%M"), p.ende.strftime("%H:%M"),
+           p.pause_minuten, round(minuten / 60, 2))
+    return {"mitarbeiter_id": m["id"], "name": m["name"],
             "datum": p.datum.isoformat(), "beginn": p.beginn.strftime("%H:%M"), "ende": p.ende.strftime("%H:%M"),
-            "pause_minuten": p.pause_minuten, "netto_stunden": round(minuten / 60, 2)}
+            "pause_minuten": p.pause_minuten, "netto_stunden": round(minuten / 60, 2), "quelle": "manuell"}
 
 
 class ZeitkontoParams(BaseModel):
@@ -206,17 +249,13 @@ class ZeitkontoParams(BaseModel):
 
 @tool(ZeitkontoParams, product="Arbeitszeitverwaltung", kind="read")
 def zeitkonto_abfragen(p: ZeitkontoParams, ctx: Context) -> dict:
-    """Zeigt Soll-, Ist-Stunden und Saldo (Überstunden) eines Mitarbeiters für einen Monat."""
+    """Zeigt Soll-, Ist-Stunden und Saldo (Überstunden) eines Mitarbeiters für einen Monat.
+    Gezählt werden die bereits vergangenen Arbeitstage; Urlaubs- und Krankheitstage zählen nicht zum Soll."""
     m = _person(p.mitarbeiter_id)
-    y, mo = map(int, p.monat.split("-"))
-    first = date(y, mo, 1)
-    last = (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-    soll = round(_workdays(first, last) * m["wochenstunden"] / 5, 2)
-    gebucht = sum(c["result"]["netto_stunden"] for c in store.successful("arbeitszeit_buchen")
-                  if c["result"]["mitarbeiter_id"] == m["id"] and c["result"]["datum"].startswith(p.monat))
-    ist = round(soll + _stable_offset(m["id"] + p.monat, -6, 14) + gebucht, 2)
-    return {"mitarbeiter_id": m["id"], "name": m["name"], "monat": p.monat, "soll_stunden": soll,
-            "ist_stunden": ist, "saldo_stunden": round(ist - soll, 2), "davon_manuell_gebucht": round(gebucht, 2)}
+    k = rules.zeitkonto(_rows, m["id"], m["wochenstunden"], p.monat)
+    if k["zeitraum"] is None:
+        raise ToolError(f"Für {p.monat} gibt es noch keine abgeschlossenen Arbeitstage.")
+    return {"mitarbeiter_id": m["id"], "name": m["name"], **k}
 
 
 # =====================================================================
@@ -225,8 +264,8 @@ def zeitkonto_abfragen(p: ZeitkontoParams, ctx: Context) -> dict:
 class SchichtZuweisenParams(BaseModel):
     mitarbeiter_id: str = MitarbeiterId
     datum: date
-    schicht: Literal["Frühschicht", "Spätschicht", "Nachtschicht", "Bereitschaft"]
-    standort: str = Field("Hauptsitz", description="Einsatzort")
+    schicht: Literal["Frühschicht", "Spätschicht", "Nachtschicht"]
+    standort: str = Field("Euskirchen", description="Einsatzort")
 
 
 @tool(SchichtZuweisenParams, product="Personaleinsatzplaner", kind="write")
@@ -234,13 +273,17 @@ def schicht_zuweisen(p: SchichtZuweisenParams, ctx: Context) -> dict:
     """Plant einen Mitarbeiter für eine Schicht an einem Tag ein. Prüft Urlaubskonflikte."""
     m = _person(p.mitarbeiter_id)
     clash = next((v for v in _vacations() if v["mitarbeiter_id"] == m["id"] and v["status"] != "abgelehnt"
-                  and date.fromisoformat(v["von"]) <= p.datum <= date.fromisoformat(v["bis"])), None)
+                  and v["von"] <= p.datum.isoformat() <= v["bis"]), None)
     if clash:
         raise ToolError(f"{m['name']} hat am {p.datum} Urlaub ({clash['antrag_id']}, {clash['status']}).")
-    zeiten = {"Frühschicht": "06:00–14:00", "Spätschicht": "14:00–22:00",
-              "Nachtschicht": "22:00–06:00", "Bereitschaft": "ganztägig"}
-    return {"einsatz_id": f"EP-{ctx.call_id:05d}", "mitarbeiter_id": m["id"], "name": m["name"],
-            "datum": p.datum.isoformat(), "schicht": p.schicht, "zeiten": zeiten[p.schicht], "standort": p.standort}
+    typ = p.schicht.removesuffix("schicht")                        # "Frühschicht" → "Früh" (as stored in the DB)
+    if _rows("SELECT 1 FROM schichten WHERE mitarbeiter_id = ? AND datum = ?", m["id"], p.datum.isoformat()):
+        raise ToolError(f"{m['name']} ist am {p.datum} bereits für eine Schicht eingeplant.")
+    _write("INSERT INTO schichten (datum, typ, mitarbeiter_id, standort) VALUES (?, ?, ?, ?)",
+           p.datum.isoformat(), typ, m["id"], p.standort)
+    zeiten = {"Frühschicht": "06:00–14:00", "Spätschicht": "14:00–22:00", "Nachtschicht": "22:00–06:00"}
+    return {"mitarbeiter_id": m["id"], "name": m["name"], "datum": p.datum.isoformat(),
+            "schicht": p.schicht, "zeiten": zeiten[p.schicht], "standort": p.standort}
 
 
 # =====================================================================
@@ -261,10 +304,13 @@ def besucher_anmelden(p: BesucherAnmeldenParams, ctx: Context) -> dict:
     host = _person(p.gastgeber_id)
     if p.datum < date.today():
         raise ToolError("Besuche können nicht in der Vergangenheit angemeldet werden.")
-    return {"besuch_id": f"BV-{ctx.call_id:05d}", "besucher": p.name, "firma": p.firma,
+    besuch_id = _next_id("besucher", "BS")
+    _write("""INSERT INTO besucher (id, name, firma, gastgeber_id, datum, uhrzeit, status)
+              VALUES (?, ?, ?, ?, ?, ?, 'angemeldet')""",
+           besuch_id, p.name, p.firma, host["id"], p.datum.isoformat(), p.uhrzeit.strftime("%H:%M"))
+    return {"besuch_id": besuch_id, "besucher": p.name, "firma": p.firma,
             "datum": p.datum.isoformat(), "uhrzeit": p.uhrzeit.strftime("%H:%M"),
-            "gastgeber": host["name"], "zweck": p.zweck, "besucherausweis": f"B-{ctx.call_id % 1000:03d}",
-            "benachrichtigt": host["id"]}
+            "gastgeber": host["name"], "zweck": p.zweck, "status": "angemeldet", "benachrichtigt": host["id"]}
 
 
 # =====================================================================
@@ -275,14 +321,19 @@ class AufgabeErstellenParams(BaseModel):
     beschreibung: str | None = None
     zustaendig_id: str = Field(description="Mitarbeiter-ID der zuständigen Person", pattern=r"^MA-\d{4}$")
     faellig_am: date | None = None
-    prioritaet: Literal["niedrig", "normal", "hoch", "dringend"] = "normal"
+    prioritaet: Literal["niedrig", "normal", "hoch"] = "normal"
 
 
 @tool(AufgabeErstellenParams, product="Aufgabenmanagement", kind="write")
 def aufgabe_erstellen(p: AufgabeErstellenParams, ctx: Context) -> dict:
     """Legt eine Aufgabe an und weist sie einem Mitarbeiter zu."""
     m = _person(p.zustaendig_id)
-    return {"aufgabe_id": f"AG-{ctx.call_id:05d}", "titel": p.titel, "zustaendig": m["name"],
+    aufgabe_id = _next_id("aufgaben", "AU")
+    _write("""INSERT INTO aufgaben (id, titel, beschreibung, zugewiesen_id, faellig, prioritaet, status)
+              VALUES (?, ?, ?, ?, ?, ?, 'offen')""",
+           aufgabe_id, p.titel, p.beschreibung, m["id"],
+           p.faellig_am.isoformat() if p.faellig_am else None, p.prioritaet)
+    return {"aufgabe_id": aufgabe_id, "titel": p.titel, "zustaendig": m["name"],
             "faellig_am": p.faellig_am.isoformat() if p.faellig_am else None,
             "prioritaet": p.prioritaet, "status": "offen"}
 
@@ -302,6 +353,9 @@ class PostErfassenParams(BaseModel):
 def post_erfassen(p: PostErfassenParams, ctx: Context) -> dict:
     """Erfasst einen Posteingang im digitalen Postbuch und benachrichtigt den Empfänger."""
     m = _person(p.empfaenger_id)
-    return {"post_id": f"PB-{ctx.call_id:05d}", "absender": p.absender, "empfaenger": m["name"],
+    post_id = _next_id("post", "PB")
+    _write("INSERT INTO post (id, absender, empfaenger_id, betreff, art, eingang_am) VALUES (?, ?, ?, ?, ?, ?)",
+           post_id, p.absender, m["id"], p.betreff, p.art, p.eingang_am.isoformat())
+    return {"post_id": post_id, "absender": p.absender, "empfaenger": m["name"],
             "betreff": p.betreff, "art": p.art, "eingang_am": p.eingang_am.isoformat(),
             "fristrelevant": p.art == "Einschreiben", "benachrichtigt": m["id"]}

@@ -1,7 +1,8 @@
-// Chat UI: two modes
-//   "rag"   – questions answered from the knowledge base   (POST api/chat)
-//   "agent" – the LangGraph agent uses Personal-Planer tools (POST api/agent/chat, api/agent/resume)
-//            and asks for approval before anything that changes data.
+// Chat UI: three modes
+//   "auto"  – the router decides: knowledge base or agent      (POST api/auto/chat)
+//   "rag"   – questions answered from the knowledge base       (POST api/chat)
+//   "agent" – the LangGraph agent uses Personal-Planer tools   (POST api/agent/chat)
+//   Auto and agent ask for approval before anything that changes data (POST api/agent/resume).
 
 const chat = document.getElementById("chat");
 const form = document.getElementById("composer");
@@ -12,9 +13,10 @@ let history = [];   // [{role, content}] (answers only, never thinking or tool s
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 let sessionId = newId();   // groups the turns of one conversation in the log
 let busy = false;
-let mode = "rag";
+let mode = "auto";
 
 const MODE_HINT = {
+  auto: "Der Assistent entscheidet selbst: Wissensbasis oder Personal-Planer-Funktionen.",
   rag: "Antworten aus der Wissensbasis",
   agent: "Der Agent nutzt Personal-Planer-Funktionen. Änderungen erst nach Ihrer Freigabe.",
 };
@@ -146,7 +148,7 @@ async function runRag(bot) {
   return finished;
 }
 
-// ================= mode "agent": tools + approvals =================
+// ================= modes "auto" + "agent": one graph stream (route → rag | agent, approvals) =================
 function addStep(bot, li) {
   bot.steps.hidden = false;
   bot.stepList.append(li);
@@ -156,6 +158,26 @@ function addStep(bot, li) {
 
 function onAgentEvent(bot, ev) {
   switch (ev.type) {
+    case "route":
+      bot.status(ev.route === "wissen" ? "Sucht in der Wissensbasis …"
+               : ev.modus === "code" ? "Schreibt ein Auswertungs-Skript …" : "Plant den ersten Schritt …");
+      break;
+    case "code": {                                   // code mode: one attempt = script + result
+      const badge = el("span", { class: `badge ${ev.ok ? "ok" : "error"}` }, ev.ok ? "ok" : "Fehler");
+      addStep(bot, el("li", { class: "tool code" },
+        "🧑‍💻 ", el("span", { class: "tname" }, `Auswertung (Versuch ${ev.n})`), badge,
+        el("div", { class: "args" }, ev.plan),
+        el("details", {}, el("summary", {}, "Code anzeigen"), el("pre", {}, ev.code)),
+        ev.ok ? el("pre", { class: "out" }, ev.output) : el("div", { class: "res" }, ev.error)));
+      bot.status(ev.ok ? "Formuliert die Antwort …" : "Korrigiert den Code …");
+      break;
+    }
+    case "sources":
+      renderSources(bot.sources, ev.items);
+      break;
+    case "cutoff":
+      bot.notice("Die Antwort wurde abgeschnitten. Bitte einfacher fragen.");
+      break;
     case "thought":
       addStep(bot, el("li", { class: "thought" }, `💭 ${ev.text}`));
       bot.status("Plant den nächsten Schritt …");
@@ -196,12 +218,15 @@ function onAgentEvent(bot, ev) {
 // Shows the approval card and resolves with true/false when a button is clicked.
 function askApproval(bot, ap) {
   return new Promise((resolve) => {
-    const rows = Object.entries(ap.args).map(([k, v]) =>
-      el("tr", {}, el("td", {}, k.replace(/_/g, " ")), el("td", {}, typeof v === "object" ? JSON.stringify(v) : String(v))));
+    const rows = ap.plan                                   // code mode: a whole plan of changes
+      ? ap.plan.map((p, i) => el("tr", {}, el("td", {}, `${i + 1}. ${label(p.tool)}`), el("td", {}, p.text)))
+      : Object.entries(ap.args).map(([k, v]) =>
+          el("tr", {}, el("td", {}, k.replace(/_/g, " ")), el("td", {}, typeof v === "object" ? JSON.stringify(v) : String(v))));
     const actions = el("div", { class: "ap-actions" });
     const card = el("div", { class: "approval" },
       el("div", { class: "ap-head" }, "⚠ Freigabe erforderlich"),
-      el("div", { class: "ap-title" }, label(ap.tool), el("span", {}, ` · ${ap.product}`)),
+      el("div", { class: "ap-title" }, ap.plan ? `${ap.plan.length} geplante Änderung(en)` : label(ap.tool),
+        el("span", {}, ` · ${ap.product}`)),
       el("p", { class: "ap-desc" }, ap.description),
       rows.length ? el("table", {}, el("tbody", {}, rows)) : null,
       ap.gedanke ? el("p", { class: "ap-thought" }, `💭 ${ap.gedanke}`) : null,
@@ -212,7 +237,7 @@ function askApproval(bot, ap) {
       resolve(ok);
     };
     actions.append(
-      el("button", { class: "ap-yes", type: "button", onclick: () => decide(true) }, "Ausführen"),
+      el("button", { class: "ap-yes", type: "button", onclick: () => decide(true) }, ap.plan ? "Alle ausführen" : "Ausführen"),
       el("button", { class: "ap-no", type: "button", onclick: () => decide(false) }, "Ablehnen"));
     bot.approvals.append(card);
     scrollDown();
@@ -220,9 +245,9 @@ function askApproval(bot, ap) {
   });
 }
 
-async function runAgent(bot) {
-  bot.status("Plant den ersten Schritt …");
-  let res = await postJSON("api/agent/chat", { messages: history.slice(-10), session_id: sessionId });
+async function runAgent(bot, url = "api/agent/chat") {
+  bot.status("Denkt nach …");
+  let res = await postJSON(url, { messages: history.slice(-10), session_id: sessionId });
   while (true) {
     let approval = null;
     let finished = false;
@@ -250,7 +275,8 @@ async function send(text) {
   scrollDown();
 
   try {
-    const finished = mode === "agent" ? await runAgent(bot) : await runRag(bot);
+    const finished = mode === "rag" ? await runRag(bot)
+                   : await runAgent(bot, mode === "auto" ? "api/auto/chat" : "api/agent/chat");
     bot.finishThinking();
     if (finished && bot.answer.trim()) history.push({ role: "assistant", content: bot.answer });
     else history.pop();
@@ -289,11 +315,14 @@ function setMode(m) {
   document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
   document.getElementById("modeHint").textContent = MODE_HINT[m];
   document.body.classList.toggle("agent-mode", m === "agent");
-  input.placeholder = m === "agent" ? "Was soll ich erledigen? z. B. „Trag für Anna nächste Woche Urlaub ein“" : "Ihre Frage an den Assistenten…";
+  input.placeholder = m === "agent" ? "Was soll ich erledigen? z. B. „Trag für Anna nächste Woche Urlaub ein“"
+                    : m === "auto" ? "Ihre Frage oder Aufgabe …"
+                    : "Ihre Frage an den Assistenten…";
   try { localStorage.setItem("ragbot-mode", m); } catch { /* storage blocked: fine */ }
 }
 document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => !busy && setMode(b.dataset.mode)));
-try { setMode(localStorage.getItem("ragbot-mode") === "agent" ? "agent" : "rag"); } catch { setMode("rag"); }
+try { const saved = localStorage.getItem("ragbot-mode"); setMode(["auto", "rag", "agent"].includes(saved) ? saved : "auto"); }
+catch { setMode("auto"); }
 
 document.getElementById("reset").addEventListener("click", () => {
   if (busy) return;

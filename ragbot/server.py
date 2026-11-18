@@ -57,6 +57,22 @@ def log_retrieval(question: str, trace: dict):
 
 
 # ---------------- chat ----------------
+@app.post("/api/auto/chat")          # router decides: knowledge base or agent
+def auto_chat(body: ChatIn):
+    history = [m.model_dump() for m in body.messages]
+    question = history[-1]["content"]
+    run = {
+            "question": question, 
+            "session_id": body.session_id, 
+            "model": get_model().name,
+            "t0": time.perf_counter(), 
+            "waited": 0.0, 
+            "status": "aborted",
+            "thoughts": [], 
+            "tools": [], 
+            "answer": [], "hits": []}
+    return _agent_stream(agent_graph.start(question, history[:-1], body.session_id, mode="auto"), run)
+
 @app.post("/api/chat")
 def chat(body: ChatIn):
     t_start = time.perf_counter()
@@ -186,21 +202,33 @@ class AgentResumeIn(BaseModel):
 
 
 def _save_agent_turn(run: dict):
-    steps = [f"💭 {t}" for t in run["thoughts"]] + [
-        f"🔧 {x['tool']} → {x['status']} (api_calls #{x['call_id']})" for x in run["tools"]]
     elapsed = time.perf_counter() - run["t0"] - run["waited"]          # without the human's thinking time
+    usage = run.get("usage", {})                                        # token counts (from 6c), may be missing
+
+    if run.get("route") == "wissen":                                    # knowledge-base answer → like a normal chat
+        model = run["model"]
+        prompt = run.get("prompt") or ""
+    else:                                                               # agent → list the steps
+        model = f"{run['model']} · agent"
+        steps = [f"💭 {t}" for t in run["thoughts"]] + [
+            f"🔧 {x['tool']} → {x['status']} (api_calls #{x['call_id']})" for x in run["tools"]]
+        prompt = "\n".join(steps) or "(keine Schritte)"
+
     turn_id = chatlog.save({
         "session_id": run["session_id"],
-        "model": f"{run['model']} · agent",
+        "model": model,
         "question": run["question"],
-        "prompt": "\n".join(steps) or "(keine Schritte)",
+        "prompt": prompt,
         "answer": "".join(run["answer"]),
         "status": run["status"],
         "error": run.get("error"),
+        "prompt_tokens": usage.get("prompt_tokens"),                    # NEW
+        "completion_tokens": usage.get("completion_tokens"),            # NEW
+        "retrieval_ms": run.get("retrieval_ms"),                        # NEW
         "total_ms": round(elapsed * 1000),
         "hits": run["hits"],
     })
-    log.info(f"[agent #{turn_id}] {run['status']}  {len(run['tools'])} tools  {elapsed:.1f}s")
+    log.info(f"[run #{turn_id}] route={run.get('route')} {run['status']}  {len(run['tools'])} tools  {elapsed:.1f}s")
 
 
 def _agent_stream(events, run: dict) -> StreamingResponse:
@@ -211,6 +239,15 @@ def _agent_stream(events, run: dict) -> StreamingResponse:
                 if t == "start":
                     run["thread_id"] = ev["thread_id"]
                     AGENT_RUNS[ev["thread_id"]] = run
+                elif t == "route":
+                    run["route"] = ev["route"]
+                    log.info(f"[route] {ev['route']}/{ev.get('modus', '')}: {ev.get('grund', '')}")
+                elif t == "search":                                                          # ← NEW
+                    run.update(hits=ev["hits"], prompt=ev.get("prompt"), retrieval_ms=ev.get("ms"))  # ← NEW
+                    continue                                                                 # ← NEW
+                elif t == "usage":                                                           # ← NEW
+                    run["usage"] = ev                                                        # ← NEW
+                    continue                                                                 # ← NEW
                 elif t == "thought":
                     run["thoughts"].append(ev["text"])
                 elif t == "answer":
@@ -221,6 +258,9 @@ def _agent_stream(events, run: dict) -> StreamingResponse:
                         run["hits"] += [{"title": h["titel"], "source": h["quelle"], "chunk": "–",
                                          "score": h["score"], "kept": True, "preview": h["text"][:300]}
                                         for h in ev["result"]["treffer"]]
+                elif t == "code":
+                    run["tools"].append({"tool": "code_ausfuehren", "status": "ok" if ev["ok"] else "error",
+                                         "call_id": ev.get("call_id")})
                 elif t == "approval":
                     run["wait_start"] = time.perf_counter()
                 yield json.dumps(ev, default=str) + "\n"
